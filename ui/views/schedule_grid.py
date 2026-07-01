@@ -1,22 +1,22 @@
 from datetime import date, timedelta
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem,
-    QLabel, QHeaderView, QMenu, QApplication,
+    QLabel, QHeaderView, QMenu, QApplication, QStyledItemDelegate,
 )
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QBrush, QFont
-from core.models import Employee, Schedule, ShiftStatus
+from PyQt6.QtCore import Qt, QRect, QRectF, QSize
+from PyQt6.QtGui import QColor, QBrush, QFont, QPainter
+from core.models import Employee, EmployeeType, Schedule, ShiftStatus
 from core.storage import save_schedule
 from ui.app import get_data_dir
 from ui.i18n import tr
 
 _STATUS_COLOR = {
-    ShiftStatus.WORK:     QColor("#166534"),   # deep forest green
-    ShiftStatus.REST:     QColor("#78716C"),   # warm taupe gray
-    ShiftStatus.FERIE:    QColor("#1D4ED8"),   # vacation blue
-    ShiftStatus.MALATTIA: QColor("#9D174D"),   # dark rose (sick, pallor)
-    ShiftStatus.PERMESSO: QColor("#92400E"),   # amber-brown (personal time)
-    ShiftStatus.OVERRIDE: QColor("#5B21B6"),   # deep violet (manual intervention)
+    ShiftStatus.WORK:     QColor("#166534"),
+    ShiftStatus.REST:     QColor("#78716C"),
+    ShiftStatus.FERIE:    QColor("#1D4ED8"),
+    ShiftStatus.MALATTIA: QColor("#9D174D"),
+    ShiftStatus.PERMESSO: QColor("#92400E"),
+    ShiftStatus.OVERRIDE: QColor("#5B21B6"),
 }
 _STATUS_TEXT = {s: QColor("#ffffff") for s in ShiftStatus}
 _STATUS_LABEL = {
@@ -28,6 +28,88 @@ _STATUS_LABEL = {
     ShiftStatus.OVERRIDE: "O",
 }
 _VALID_OVERRIDES = list(ShiftStatus)
+
+# Eight distinct avatar colors — deterministic per employee name
+_AVATAR_COLORS = [
+    "#1D4ED8", "#166534", "#9D174D", "#92400E",
+    "#5B21B6", "#0E7490", "#C2410C", "#374151",
+]
+
+
+class _NameDelegate(QStyledItemDelegate):
+    """Paints avatar circle + name + employee type for the name column (col 0)."""
+
+    def paint(self, painter: QPainter, option, index):
+        emp = index.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(emp, Employee):
+            super().paint(painter, option, index)
+            return
+
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        r = option.rect
+        painter.fillRect(r, QColor("#FDF6EE"))
+
+        # Bottom separator
+        painter.setPen(QColor("#E8DDD2"))
+        painter.drawLine(r.left(), r.bottom(), r.right(), r.bottom())
+
+        # Right border separating name col from day cells
+        painter.setPen(QColor("#C8B8A8"))
+        painter.drawLine(r.right(), r.top(), r.right(), r.bottom())
+
+        # Avatar circle (color stable across sessions — derived from name)
+        hash_val = sum(ord(c) for c in emp.name)
+        avatar_color = QColor(_AVATAR_COLORS[hash_val % len(_AVATAR_COLORS)])
+        cx = float(r.left() + 26)
+        cy = float(r.center().y())
+        rad = 15.0
+        painter.setBrush(QBrush(avatar_color))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(QRectF(cx - rad, cy - rad, rad * 2, rad * 2))
+
+        # Initials inside circle
+        parts = emp.name.split()
+        initials = (parts[0][0] + (parts[1][0] if len(parts) > 1 else "")).upper()
+        f_init = QFont("Segoe UI", 8, QFont.Weight.Bold)
+        painter.setFont(f_init)
+        painter.setPen(QColor("#ffffff"))
+        painter.drawText(
+            QRect(r.left() + 11, r.top(), 30, r.height()),
+            Qt.AlignmentFlag.AlignCenter,
+            initials,
+        )
+
+        # Employee name
+        f_name = QFont("Segoe UI", 11)
+        f_name.setBold(True)
+        painter.setFont(f_name)
+        painter.setPen(QColor("#1C140D"))
+        half = r.height() // 2
+        name_rect = QRect(r.left() + 50, r.top() + 4, r.width() - 56, half - 2)
+        painter.drawText(
+            name_rect,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom,
+            emp.name,
+        )
+
+        # Employee type label (muted, smaller)
+        type_str = tr("employee.full_time") if emp.type == EmployeeType.FULL_TIME else tr("employee.part_time")
+        f_type = QFont("Segoe UI", 8)
+        painter.setFont(f_type)
+        painter.setPen(QColor("#9A7B6B"))
+        type_rect = QRect(r.left() + 50, r.top() + half + 2, r.width() - 56, half - 6)
+        painter.drawText(
+            type_rect,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+            type_str,
+        )
+
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        return QSize(175, 44)
 
 
 class ScheduleGridView(QWidget):
@@ -64,71 +146,90 @@ class ScheduleGridView(QWidget):
         employees = self._employees
         cycle_dates = [self._start_date + timedelta(days=i) for i in range(28)]
 
-        # Build lookup: (employee_id, date) -> ShiftStatus
         status_lookup: dict[tuple[str, date], ShiftStatus] = {}
         for day in schedule.days:
             for shift in day.shifts:
                 status_lookup[(shift.employee_id, day.date)] = shift.status
 
-        n_rows = len(employees) + 1  # +1 for staffing totals row
-        n_cols = len(cycle_dates) + 1  # +1 for row totals column
+        # col 0 = name, cols 1–28 = days, col 29 = total worked
+        n_rows = len(employees) + 1
+        n_cols = len(cycle_dates) + 2
         self._table.setRowCount(n_rows)
         self._table.setColumnCount(n_cols)
 
-        # Column headers: "D Xxx" (e.g. "1 Lun")
-        headers = []
+        day_headers = []
         for d in cycle_dates:
             wd = tr(f"weekday.short.{d.weekday()}")
-            headers.append(f"{d.day} {wd}")
-        headers.append(tr("schedule.days_worked"))
-        self._table.setHorizontalHeaderLabels(headers)
+            day_headers.append(f"{d.day} {wd}")
+        self._table.setHorizontalHeaderLabels(
+            [tr("employee.name")] + day_headers + [tr("schedule.days_worked")]
+        )
 
-        # Row headers: employee names
-        row_labels = [e.name for e in employees] + [tr("schedule.staffing_below_min")]
-        self._table.setVerticalHeaderLabels(row_labels)
+        # Hide row-index vertical header; row height controlled by delegate sizeHint
+        self._table.verticalHeader().hide()
+        self._table.verticalHeader().setDefaultSectionSize(44)
+
+        self._table.setItemDelegateForColumn(0, _NameDelegate(self._table))
 
         min_staffing = {d: (9 if d.weekday() in (4, 5) else 8) for d in cycle_dates}
-
-        # Fill cells
         daily_counts: dict[date, int] = {d: 0 for d in cycle_dates}
+
         for row_idx, emp in enumerate(employees):
+            # Name cell
+            name_item = QTableWidgetItem()
+            name_item.setData(Qt.ItemDataRole.UserRole, emp)
+            name_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            self._table.setItem(row_idx, 0, name_item)
+
             work_count = 0
             for col_idx, d in enumerate(cycle_dates):
                 status = status_lookup.get((emp.id, d), ShiftStatus.REST)
-                item = self._make_cell(status)
-                self._table.setItem(row_idx, col_idx, item)
+                self._table.setItem(row_idx, col_idx + 1, self._make_cell(status))
                 if status == ShiftStatus.WORK:
                     work_count += 1
                     daily_counts[d] += 1
-            # Row total
+
             total_item = QTableWidgetItem(f"{work_count}/28")
+            total_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             total_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
-            self._table.setItem(row_idx, 28, total_item)
+            self._table.setItem(row_idx, 29, total_item)
 
         # Staffing totals row
+        staffing_label = QTableWidgetItem(tr("schedule.staffing_below_min"))
+        staffing_label.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        staffing_label.setFlags(Qt.ItemFlag.ItemIsEnabled)
+        lbl_font = QFont()
+        lbl_font.setBold(True)
+        lbl_font.setPointSize(9)
+        staffing_label.setFont(lbl_font)
+        staffing_label.setBackground(QBrush(QColor("#292217")))
+        staffing_label.setForeground(QBrush(QColor("#F5EDE3")))
+        self._table.setItem(len(employees), 0, staffing_label)
+
         for col_idx, d in enumerate(cycle_dates):
             count = daily_counts[d]
             required = min_staffing[d]
             item = QTableWidgetItem(str(count))
             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             item.setFlags(Qt.ItemFlag.ItemIsEnabled)
-            font = QFont()
-            font.setBold(True)
-            item.setFont(font)
+            count_font = QFont()
+            count_font.setBold(True)
+            item.setFont(count_font)
             if count < required:
                 item.setBackground(QBrush(QColor("#dc2626")))
                 item.setForeground(QBrush(QColor("#ffffff")))
             else:
                 item.setBackground(QBrush(QColor("#f0fdf4")))
                 item.setForeground(QBrush(QColor("#166534")))
-            self._table.setItem(len(employees), col_idx, item)
+            self._table.setItem(len(employees), col_idx + 1, item)
 
-        # Resize
-        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        self._table.horizontalHeader().setMinimumSectionSize(36)
-        self._table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        # col 0 fixed width; all other columns resize to content
+        hh = self._table.horizontalHeader()
+        hh.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        hh.setMinimumSectionSize(36)
+        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        self._table.setColumnWidth(0, 175)
 
-        # Context menu for override
         self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._table.customContextMenuRequested.connect(self._show_context_menu)
 
@@ -148,10 +249,11 @@ class ScheduleGridView(QWidget):
         if not idx.isValid():
             return
         row, col = idx.row(), idx.column()
-        if col >= 28 or row >= len(self._employees):
+        # col 0 = name, col 29 = total, last row = staffing counts
+        if col == 0 or col >= 29 or row >= len(self._employees):
             return
         emp = self._employees[row]
-        d = self._start_date + timedelta(days=col)
+        d = self._start_date + timedelta(days=col - 1)
 
         menu = QMenu(self)
         for status in _VALID_OVERRIDES:
