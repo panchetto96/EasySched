@@ -4,6 +4,7 @@ from core.models import Employee, EmployeeType, ExceptionType, ScheduleException
 from core.scheduler import (
     _minimum_for_date, VALID_FIXED_BLOCKS, _assign_rest_blocks,
     _assign_free_weekends, _build_ft_schedule, _find_consecutive_stretches,
+    _staffing_count, _check_consecutive,
 )
 
 
@@ -200,3 +201,50 @@ def test_find_stretches_simple():
     lengths = [length for _, length in stretches]
     assert 3 in lengths
     assert 2 in lengths
+
+
+# ── _staffing_count ────────────────────────────────────────────────────────────
+
+def test_staffing_count_counts_work_only():
+    emp1, emp2, emp3 = make_ft("A"), make_ft("B"), make_ft("C")
+    d = date(2025, 7, 7)
+    matrix = {
+        emp1.id: {d: ShiftStatus.WORK},
+        emp2.id: {d: ShiftStatus.REST},
+        emp3.id: {d: ShiftStatus.WORK},
+    }
+    assert _staffing_count(matrix, d) == 2
+
+
+# ── _check_consecutive ────────────────────────────────────────────────────────
+
+def test_check_consecutive_no_violations():
+    emp = make_ft(block=[0, 1])
+    cycle_dates = [date(2025, 7, 7) + timedelta(days=i) for i in range(28)]
+    day_map = _build_ft_schedule(emp, cycle_dates, {}, [0, 1], "fri_sat")
+    matrix = {emp.id: day_map}
+    exceptions = _check_consecutive(matrix, cycle_dates)
+    # Allow zero or a few 6-day exceptions, but no 7+ violations
+    for exc in exceptions:
+        assert exc.type == ExceptionType.SIX_DAY_STRETCH
+
+
+def test_check_consecutive_detects_six_day_stretch():
+    # Build a schedule with a known 6-day stretch
+    d0 = date(2025, 7, 7)  # Monday
+    cycle_dates = [d0 + timedelta(days=i) for i in range(28)]
+    emp = make_ft()
+    # Manually set: work Mon-Sat (6 days), rest Sun, work Mon...
+    day_map = {}
+    for i, d in enumerate(cycle_dates):
+        if i in (6, 13, 20, 27):  # Sundays
+            day_map[d] = ShiftStatus.REST
+        elif i in (7, 8):  # Two rest days in second week
+            day_map[d] = ShiftStatus.REST
+        else:
+            day_map[d] = ShiftStatus.WORK
+    matrix = {emp.id: day_map}
+    exceptions = _check_consecutive(matrix, cycle_dates)
+    # There should be at least one SIX_DAY_STRETCH exception
+    six_day = [e for e in exceptions if e.type == ExceptionType.SIX_DAY_STRETCH]
+    assert len(six_day) >= 1

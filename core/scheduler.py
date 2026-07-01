@@ -149,3 +149,84 @@ def _build_ft_schedule(
             best_map = candidate
 
     return best_map  # type: ignore[return-value]
+
+
+def _staffing_count(
+    schedule_matrix: dict[str, dict[date, ShiftStatus]],
+    d: date,
+) -> int:
+    """Count WORK shifts for a given date across all employees."""
+    return sum(
+        1 for day_map in schedule_matrix.values()
+        if day_map.get(d) == ShiftStatus.WORK
+    )
+
+
+def _check_consecutive(
+    schedule_matrix: dict[str, dict[date, ShiftStatus]],
+    cycle_dates: list[date],
+) -> list[ScheduleException]:
+    """
+    Scan all employees for consecutive working day violations.
+    Records 6-day stretches as exceptions.
+    Raises ValueError if any stretch exceeds 6 (caller must handle via fallback).
+    """
+    exceptions: list[ScheduleException] = []
+    for emp_id, day_map in schedule_matrix.items():
+        stretches = _find_consecutive_stretches(day_map, cycle_dates)
+        for stretch_start, length in stretches:
+            if length == 6:
+                exceptions.append(ScheduleException(
+                    employee_id=emp_id,
+                    type=ExceptionType.SIX_DAY_STRETCH,
+                    date=stretch_start,
+                ))
+            elif length > 6:
+                raise ValueError(
+                    f"Employee {emp_id} has {length} consecutive working days "
+                    f"starting {stretch_start} — schedule is infeasible as drafted"
+                )
+    return exceptions
+
+
+def _repair_staffing(
+    schedule_matrix: dict[str, dict[date, ShiftStatus]],
+    active_ft: list[Employee],
+    cycle_dates: list[date],
+    leave_sets: dict[str, set[date]],
+) -> list[StaffingShortfall]:
+    """
+    For each under-staffed day, try to convert a REST day to WORK for one employee
+    who: (a) is resting that day, (b) won't create a 7+ consecutive stretch.
+    Returns unfixable shortfalls.
+    """
+    shortfalls: list[StaffingShortfall] = []
+    for d in cycle_dates:
+        required = _minimum_for_date(d)
+        actual = _staffing_count(schedule_matrix, d)
+        if actual >= required:
+            continue
+
+        repaired = False
+        for emp in active_ft:
+            day_map = schedule_matrix[emp.id]
+            if day_map.get(d) != ShiftStatus.REST:
+                continue
+            if d in leave_sets.get(emp.id, set()):
+                continue
+            # Tentatively flip to WORK and check consecutive days
+            day_map[d] = ShiftStatus.WORK
+            stretches = _find_consecutive_stretches(day_map, cycle_dates)
+            if all(length <= 6 for _, length in stretches):
+                repaired = True
+                break
+            else:
+                day_map[d] = ShiftStatus.REST  # revert
+
+        if not repaired:
+            shortfalls.append(StaffingShortfall(
+                date=d,
+                actual_count=actual,
+                required_count=required,
+            ))
+    return shortfalls
