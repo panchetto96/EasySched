@@ -3,7 +3,6 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QGridLayout, QLabel, QScrollArea, QFrame,
 )
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor
 from core.models import Employee, Schedule, ShiftStatus
 from ui.i18n import tr
 
