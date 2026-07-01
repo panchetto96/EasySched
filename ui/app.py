@@ -23,17 +23,17 @@ def init_app(data_dir: Path) -> QApplication:
 
 def _apply_stylesheet(app: QApplication) -> None:
     app.setStyleSheet("""
-        QMainWindow { background-color: #f1f5f9; }
+        QMainWindow { background-color: #FAF7F2; }
         QWidget {
-            background-color: #f1f5f9;
-            color: #0f172a;
+            background-color: #FAF7F2;
+            color: #1C140D;
             font-family: 'Segoe UI', Arial, sans-serif;
             font-size: 13px;
         }
 
-        /* ── Primary button ── */
+        /* ── Primary button (terracotta) ── */
         QPushButton {
-            background-color: #1d4ed8;
+            background-color: #C2410C;
             color: #ffffff;
             border: none;
             padding: 7px 18px;
@@ -41,31 +41,31 @@ def _apply_stylesheet(app: QApplication) -> None:
             font-weight: 600;
             letter-spacing: 0.3px;
         }
-        QPushButton:hover  { background-color: #2563eb; }
-        QPushButton:pressed { background-color: #1e3a8a; }
+        QPushButton:hover  { background-color: #9A3412; }
+        QPushButton:pressed { background-color: #7C2D12; }
 
         /* ── Secondary button ── */
         QPushButton#secondary {
             background-color: #ffffff;
-            color: #334155;
-            border: 1.5px solid #cbd5e1;
+            color: #3D2B1F;
+            border: 1.5px solid #C8B8A8;
         }
-        QPushButton#secondary:hover  { background-color: #f8fafc; border-color: #94a3b8; }
-        QPushButton#secondary:pressed { background-color: #e2e8f0; }
+        QPushButton#secondary:hover  { background-color: #FAF7F2; border-color: #A08C7A; }
+        QPushButton#secondary:pressed { background-color: #F0E8DF; }
 
         /* ── Table ── */
         QTableWidget {
             background: #ffffff;
-            color: #0f172a;
-            gridline-color: #e2e8f0;
-            border: 1px solid #e2e8f0;
+            color: #1C140D;
+            gridline-color: #D6CBC0;
+            border: 1px solid #D6CBC0;
             border-radius: 6px;
         }
         QTableWidget::item { padding: 2px; }
-        QTableWidget::item:selected { background-color: #bfdbfe; color: #0f172a; }
+        QTableWidget::item:selected { background-color: #FED7AA; color: #1C140D; }
         QHeaderView::section {
-            background-color: #1e293b;
-            color: #f8fafc;
+            background-color: #292217;
+            color: #F5EDE3;
             padding: 6px 4px;
             border: none;
             font-weight: 700;
@@ -76,33 +76,33 @@ def _apply_stylesheet(app: QApplication) -> None:
         /* ── List widget ── */
         QListWidget {
             background: #ffffff;
-            color: #0f172a;
-            border: 1px solid #e2e8f0;
+            color: #1C140D;
+            border: 1px solid #D6CBC0;
             border-radius: 6px;
         }
         QListWidget::item { padding: 5px 8px; }
-        QListWidget::item:selected { background-color: #bfdbfe; color: #0f172a; }
+        QListWidget::item:selected { background-color: #FED7AA; color: #1C140D; }
 
         /* ── Form inputs ── */
         QLineEdit, QComboBox, QDateEdit, QSpinBox {
             background: #ffffff;
-            color: #0f172a;
-            border: 1.5px solid #cbd5e1;
+            color: #1C140D;
+            border: 1.5px solid #C8B8A8;
             border-radius: 5px;
             padding: 5px 8px;
-            selection-background-color: #bfdbfe;
+            selection-background-color: #FED7AA;
         }
         QLineEdit:focus, QComboBox:focus, QDateEdit:focus {
-            border-color: #3b82f6;
+            border-color: #C2410C;
         }
         QComboBox::drop-down { border: none; width: 20px; }
 
         /* ── Labels ── */
-        QLabel { color: #0f172a; background-color: transparent; }
-        QLabel#section_title { font-size: 16px; font-weight: 700; color: #1d4ed8; }
+        QLabel { color: #1C140D; background-color: transparent; }
+        QLabel#section_title { font-size: 16px; font-weight: 700; color: #9A3412; }
 
         /* ── Scroll areas ── */
-        QScrollArea { background: #f1f5f9; border: none; }
+        QScrollArea { background: #FAF7F2; border: none; }
 
         /* ── Dialog ── */
         QDialog { background-color: #ffffff; }
@@ -111,5 +111,5 @@ def _apply_stylesheet(app: QApplication) -> None:
 
         /* ── Message box ── */
         QMessageBox { background-color: #ffffff; }
-        QMessageBox QLabel { color: #0f172a; }
+        QMessageBox QLabel { color: #1C140D; }
     """)

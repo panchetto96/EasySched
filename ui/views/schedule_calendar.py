@@ -59,7 +59,7 @@ class ScheduleCalendarView(QWidget):
             is_weekend = col in (5, 6)
             lbl.setStyleSheet(
                 f"font-weight: 700; font-size: 12px; padding: 6px 0; "
-                f"color: {'#dc2626' if is_weekend else '#1e293b'}; background: transparent;"
+                f"color: {'#dc2626' if is_weekend else '#292217'}; background: transparent;"
             )
             self._grid.addWidget(lbl, 0, col)
 

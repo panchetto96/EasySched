@@ -37,7 +37,7 @@ class MainWindow(QMainWindow):
 
     def _build_nav_bar(self):
         bar = QFrame()
-        bar.setStyleSheet("background-color: #0f172a;")
+        bar.setStyleSheet("background-color: #292217;")
         bar.setFixedHeight(52)
         layout = QHBoxLayout(bar)
         layout.setContentsMargins(16, 0, 16, 0)
@@ -46,7 +46,7 @@ class MainWindow(QMainWindow):
         def nav_btn(key, idx):
             btn = QPushButton(tr(key))
             btn.setStyleSheet(
-                "color: #cbd5e1; background: transparent; font-size: 14px; "
+                "color: #E5D5C0; background: transparent; font-size: 14px; "
                 "font-weight: 600; padding: 6px 16px; border-radius: 6px;"
                 "border: none;"
             )
@@ -60,8 +60,8 @@ class MainWindow(QMainWindow):
 
         self._lang_btn = QPushButton("IT | EN")
         self._lang_btn.setStyleSheet(
-            "color: #64748b; background: transparent; font-size: 12px; "
-            "padding: 4px 10px; border: 1px solid #334155; border-radius: 4px;"
+            "color: #A08C7A; background: transparent; font-size: 12px; "
+            "padding: 4px 10px; border: 1px solid #4A3728; border-radius: 4px;"
         )
         self._lang_btn.clicked.connect(self._toggle_language)
         layout.addWidget(self._lang_btn)
@@ -70,7 +70,7 @@ class MainWindow(QMainWindow):
     def _build_toolbar(self):
         bar = QFrame()
         bar.setStyleSheet(
-            "background-color: #ffffff; border-bottom: 2px solid #e2e8f0;"
+            "background-color: #ffffff; border-bottom: 2px solid #E2D9CF;"
         )
         bar.setFixedHeight(48)
         layout = QHBoxLayout(bar)
@@ -79,7 +79,7 @@ class MainWindow(QMainWindow):
 
         self._cycle_label = QLabel()
         self._cycle_label.setStyleSheet(
-            "color: #1e293b; font-size: 14px; font-weight: 700; "
+            "color: #292217; font-size: 14px; font-weight: 700; "
             "background: transparent; padding-right: 12px;"
         )
         layout.addWidget(self._cycle_label)

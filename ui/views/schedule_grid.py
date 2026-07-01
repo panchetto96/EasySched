@@ -11,21 +11,14 @@ from ui.app import get_data_dir
 from ui.i18n import tr
 
 _STATUS_COLOR = {
-    ShiftStatus.WORK:     QColor("#16a34a"),   # vivid green
-    ShiftStatus.REST:     QColor("#94a3b8"),   # slate gray
-    ShiftStatus.FERIE:    QColor("#2563eb"),   # vivid blue
-    ShiftStatus.MALATTIA: QColor("#ea580c"),   # vivid orange
-    ShiftStatus.PERMESSO: QColor("#d97706"),   # vivid amber
-    ShiftStatus.OVERRIDE: QColor("#7c3aed"),   # vivid purple
+    ShiftStatus.WORK:     QColor("#166534"),   # deep forest green
+    ShiftStatus.REST:     QColor("#78716C"),   # warm taupe gray
+    ShiftStatus.FERIE:    QColor("#1D4ED8"),   # vacation blue
+    ShiftStatus.MALATTIA: QColor("#9D174D"),   # dark rose (sick, pallor)
+    ShiftStatus.PERMESSO: QColor("#92400E"),   # amber-brown (personal time)
+    ShiftStatus.OVERRIDE: QColor("#5B21B6"),   # deep violet (manual intervention)
 }
-_STATUS_TEXT = {
-    ShiftStatus.WORK:     QColor("#ffffff"),
-    ShiftStatus.REST:     QColor("#ffffff"),
-    ShiftStatus.FERIE:    QColor("#ffffff"),
-    ShiftStatus.MALATTIA: QColor("#ffffff"),
-    ShiftStatus.PERMESSO: QColor("#ffffff"),
-    ShiftStatus.OVERRIDE: QColor("#ffffff"),
-}
+_STATUS_TEXT = {s: QColor("#ffffff") for s in ShiftStatus}
 _STATUS_LABEL = {
     ShiftStatus.WORK:     "L",
     ShiftStatus.REST:     "R",
