@@ -1,7 +1,10 @@
 import uuid
-from datetime import date
-from core.models import Employee, EmployeeType, ExceptionType, ScheduleException
-from core.scheduler import _minimum_for_date, VALID_FIXED_BLOCKS, _assign_rest_blocks
+from datetime import date, timedelta
+from core.models import Employee, EmployeeType, ExceptionType, ScheduleException, ShiftStatus
+from core.scheduler import (
+    _minimum_for_date, VALID_FIXED_BLOCKS, _assign_rest_blocks,
+    _assign_free_weekends, _build_ft_schedule, _find_consecutive_stretches,
+)
 
 
 def make_ft(name="E", block=None) -> Employee:
@@ -92,3 +95,95 @@ def test_no_sat_sun_block_ever_assigned():
     for emp_id, block in result.items():
         assert block != [5, 6], f"Sat-Sun block assigned to {emp_id}"
         assert block != [4, 5], f"Fri-Sat block assigned to {emp_id}"
+
+
+# ── _assign_free_weekends ──────────────────────────────────────────────────────
+
+def test_free_weekend_default_is_fri_sat():
+    emp = make_ft()
+    result = _assign_free_weekends([emp], [])
+    assert result[emp.id] in ("fri_sat", "sat_sun")
+
+
+def test_free_weekend_rotates_from_previous():
+    emp = make_ft()
+    prev = [
+        ScheduleException(
+            employee_id=emp.id,
+            type=ExceptionType.FREE_WEEKEND_FRI_SAT,
+            date=date(2025, 7, 1),
+        )
+    ]
+    result = _assign_free_weekends([emp], prev)
+    assert result[emp.id] == "sat_sun"
+
+
+def test_free_weekend_rotates_back():
+    emp = make_ft()
+    prev = [
+        ScheduleException(
+            employee_id=emp.id,
+            type=ExceptionType.FREE_WEEKEND_SAT_SUN,
+            date=date(2025, 7, 1),
+        )
+    ]
+    result = _assign_free_weekends([emp], prev)
+    assert result[emp.id] == "fri_sat"
+
+
+# ── _build_ft_schedule ─────────────────────────────────────────────────────────
+
+def test_ft_schedule_has_exactly_20_work_days():
+    # Start Monday 2025-07-07, block Mon-Tue [0,1], free weekend fri_sat
+    emp = make_ft(block=[0, 1])
+    cycle_dates = [date(2025, 7, 7) + timedelta(days=i) for i in range(28)]
+    day_map = _build_ft_schedule(emp, cycle_dates, {}, [0, 1], "fri_sat")
+    work_days = sum(1 for s in day_map.values() if s == ShiftStatus.WORK)
+    assert work_days == 20
+
+
+def test_ft_schedule_has_exactly_8_rest_days():
+    emp = make_ft(block=[0, 1])
+    cycle_dates = [date(2025, 7, 7) + timedelta(days=i) for i in range(28)]
+    day_map = _build_ft_schedule(emp, cycle_dates, {}, [0, 1], "fri_sat")
+    rest_days = sum(1 for s in day_map.values() if s == ShiftStatus.REST)
+    assert rest_days == 8
+
+
+def test_ft_schedule_leave_days_excluded_from_work():
+    emp = make_ft(block=[0, 1])
+    cycle_dates = [date(2025, 7, 7) + timedelta(days=i) for i in range(28)]
+    leave_date = date(2025, 7, 10)  # Thursday (normally a work day for Mon-Tue block)
+    leave_map = {leave_date: ShiftStatus.FERIE}
+    day_map = _build_ft_schedule(emp, cycle_dates, leave_map, [0, 1], "fri_sat")
+    assert day_map[leave_date] == ShiftStatus.FERIE
+
+
+def test_ft_schedule_max_consecutive_le_6():
+    emp = make_ft(block=[0, 1])
+    cycle_dates = [date(2025, 7, 7) + timedelta(days=i) for i in range(28)]
+    day_map = _build_ft_schedule(emp, cycle_dates, {}, [0, 1], "fri_sat")
+    stretches = _find_consecutive_stretches(day_map, cycle_dates)
+    for _, length in stretches:
+        assert length <= 6, f"Consecutive stretch of {length} days found"
+
+
+# ── _find_consecutive_stretches ────────────────────────────────────────────────
+
+def test_find_stretches_simple():
+    start = date(2025, 7, 7)
+    dates = [start + timedelta(days=i) for i in range(7)]
+    # Work Mon-Wed, rest Thu-Fri, work Sat-Sun
+    day_map = {
+        dates[0]: ShiftStatus.WORK,
+        dates[1]: ShiftStatus.WORK,
+        dates[2]: ShiftStatus.WORK,
+        dates[3]: ShiftStatus.REST,
+        dates[4]: ShiftStatus.REST,
+        dates[5]: ShiftStatus.WORK,
+        dates[6]: ShiftStatus.WORK,
+    }
+    stretches = _find_consecutive_stretches(day_map, dates)
+    lengths = [length for _, length in stretches]
+    assert 3 in lengths
+    assert 2 in lengths
