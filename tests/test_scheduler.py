@@ -1,10 +1,11 @@
 import uuid
+import pytest
 from datetime import date, timedelta
 from core.models import Employee, EmployeeType, ExceptionType, ScheduleException, ShiftStatus
 from core.scheduler import (
     _minimum_for_date, VALID_FIXED_BLOCKS, _assign_rest_blocks,
     _assign_free_weekends, _build_ft_schedule, _find_consecutive_stretches,
-    _staffing_count, _check_consecutive,
+    _staffing_count, _check_consecutive, MAX_CONSECUTIVE,
     generate_schedule,
 )
 from core.models import Leave, LeaveType
@@ -151,10 +152,9 @@ def test_free_weekend_rotates_back():
 # ── _build_ft_schedule ─────────────────────────────────────────────────────────
 
 def test_ft_schedule_has_exactly_20_work_days():
-    # Start Monday 2025-07-07, block Mon-Tue [0,1], free weekend fri_sat
     emp = make_ft(block=[0, 1])
     cycle_dates = [date(2025, 7, 7) + timedelta(days=i) for i in range(28)]
-    day_map = _build_ft_schedule(emp, cycle_dates, {}, [0, 1], "fri_sat")
+    day_map, _, _ = _build_ft_schedule(emp, cycle_dates, {}, [0, 1], "fri_sat")
     work_days = sum(1 for s in day_map.values() if s == ShiftStatus.WORK)
     assert work_days == 20
 
@@ -162,7 +162,7 @@ def test_ft_schedule_has_exactly_20_work_days():
 def test_ft_schedule_has_exactly_8_rest_days():
     emp = make_ft(block=[0, 1])
     cycle_dates = [date(2025, 7, 7) + timedelta(days=i) for i in range(28)]
-    day_map = _build_ft_schedule(emp, cycle_dates, {}, [0, 1], "fri_sat")
+    day_map, _, _ = _build_ft_schedule(emp, cycle_dates, {}, [0, 1], "fri_sat")
     rest_days = sum(1 for s in day_map.values() if s == ShiftStatus.REST)
     assert rest_days == 8
 
@@ -170,9 +170,9 @@ def test_ft_schedule_has_exactly_8_rest_days():
 def test_ft_schedule_leave_days_excluded_from_work():
     emp = make_ft(block=[0, 1])
     cycle_dates = [date(2025, 7, 7) + timedelta(days=i) for i in range(28)]
-    leave_date = date(2025, 7, 10)  # Thursday (normally a work day for Mon-Tue block)
+    leave_date = date(2025, 7, 10)
     leave_map = {leave_date: ShiftStatus.FERIE}
-    day_map = _build_ft_schedule(emp, cycle_dates, leave_map, [0, 1], "fri_sat")
+    day_map, _, _ = _build_ft_schedule(emp, cycle_dates, leave_map, [0, 1], "fri_sat")
     assert day_map[leave_date] == ShiftStatus.FERIE
 
 
@@ -181,21 +181,29 @@ def test_ft_schedule_leave_days_reduce_work_rest_total():
     cycle_dates = [date(2025, 7, 7) + timedelta(days=i) for i in range(28)]
     leave_date = date(2025, 7, 10)
     leave_map = {leave_date: ShiftStatus.FERIE}
-    day_map = _build_ft_schedule(emp, cycle_dates, leave_map, [0, 1], "fri_sat")
+    day_map, _, _ = _build_ft_schedule(emp, cycle_dates, leave_map, [0, 1], "fri_sat")
     work_days = sum(1 for s in day_map.values() if s == ShiftStatus.WORK)
     rest_days = sum(1 for s in day_map.values() if s == ShiftStatus.REST)
-    # Leave day is not WORK or REST, so total is 27
     assert work_days + rest_days == 27
     assert day_map[leave_date] == ShiftStatus.FERIE
 
 
-def test_ft_schedule_max_consecutive_le_6():
+def test_ft_schedule_max_consecutive_le_5():
     emp = make_ft(block=[0, 1])
     cycle_dates = [date(2025, 7, 7) + timedelta(days=i) for i in range(28)]
-    day_map = _build_ft_schedule(emp, cycle_dates, {}, [0, 1], "fri_sat")
+    day_map, _, _ = _build_ft_schedule(emp, cycle_dates, {}, [0, 1], "fri_sat")
     stretches = _find_consecutive_stretches(day_map, cycle_dates)
     for _, length in stretches:
-        assert length <= 6, f"Consecutive stretch of {length} days found"
+        assert length <= MAX_CONSECUTIVE, f"Consecutive stretch of {length} days found"
+
+
+def test_ft_schedule_weekend_placed_flag():
+    """fri_sat on Mon-start cycle with block [0,1] should always find a valid span."""
+    emp = make_ft(block=[0, 1])
+    cycle_dates = [date(2025, 7, 7) + timedelta(days=i) for i in range(28)]
+    _, weekend_placed, span_idx = _build_ft_schedule(emp, cycle_dates, {}, [0, 1], "fri_sat")
+    assert weekend_placed is True
+    assert 0 <= span_idx <= 3
 
 
 # ── _find_consecutive_stretches ────────────────────────────────────────────────
@@ -237,20 +245,18 @@ def test_staffing_count_counts_work_only():
 def test_check_consecutive_no_violations():
     emp = make_ft(block=[0, 1])
     cycle_dates = [date(2025, 7, 7) + timedelta(days=i) for i in range(28)]
-    day_map = _build_ft_schedule(emp, cycle_dates, {}, [0, 1], "fri_sat")
+    day_map, _, _ = _build_ft_schedule(emp, cycle_dates, {}, [0, 1], "fri_sat")
     matrix = {emp.id: day_map}
+    # A properly built schedule should have no consecutive violations
     exceptions = _check_consecutive(matrix, cycle_dates)
-    # Allow zero or a few 6-day exceptions, but no 7+ violations
-    for exc in exceptions:
-        assert exc.type == ExceptionType.SIX_DAY_STRETCH
+    assert exceptions == []
 
 
-def test_check_consecutive_detects_six_day_stretch():
-    # Build a schedule with a known 6-day stretch
+def test_check_consecutive_raises_on_excessive_stretch():
+    # Build a schedule with a known 6-day consecutive stretch — should raise ValueError
     d0 = date(2025, 7, 7)  # Monday
     cycle_dates = [d0 + timedelta(days=i) for i in range(28)]
     emp = make_ft()
-    # Manually set: work Mon-Sat (6 days), rest Sun, work Mon...
     day_map = {}
     for i, d in enumerate(cycle_dates):
         if i in (6, 13, 20, 27):  # Sundays
@@ -260,10 +266,8 @@ def test_check_consecutive_detects_six_day_stretch():
         else:
             day_map[d] = ShiftStatus.WORK
     matrix = {emp.id: day_map}
-    exceptions = _check_consecutive(matrix, cycle_dates)
-    # There should be at least one SIX_DAY_STRETCH exception
-    six_day = [e for e in exceptions if e.type == ExceptionType.SIX_DAY_STRETCH]
-    assert len(six_day) >= 1
+    with pytest.raises(ValueError):
+        _check_consecutive(matrix, cycle_dates)
 
 
 # ── generate_schedule integration tests ───────────────────────────────────────
@@ -312,7 +316,9 @@ def test_generate_schedule_no_excessive_consecutive():
         cycle_dates = [START + timedelta(days=i) for i in range(28)]
         stretches = _find_consecutive_stretches(day_map, cycle_dates)
         for start_d, length in stretches:
-            assert length <= 6, f"{emp.name}: {length} consecutive days from {start_d}"
+            assert length <= MAX_CONSECUTIVE, (
+                f"{emp.name}: {length} consecutive days from {start_d}"
+            )
 
 
 def test_generate_schedule_part_time_range():

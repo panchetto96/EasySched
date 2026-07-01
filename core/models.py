@@ -24,10 +24,11 @@ class ShiftStatus(str, Enum):
 
 
 class ExceptionType(str, Enum):
-    SIX_DAY_STRETCH = "six_day_stretch"
+    SIX_DAY_STRETCH = "six_day_stretch"   # kept for JSON backwards compat
     FALLBACK_ACTIVATED = "fallback_activated"
     FREE_WEEKEND_FRI_SAT = "free_weekend_fri_sat"
     FREE_WEEKEND_SAT_SUN = "free_weekend_sat_sun"
+    WEEKEND_MISSED = "weekend_missed"     # no span achieved ≤5 consecutive days
 
 
 @dataclass

@@ -5,8 +5,11 @@ from core.models import (
     Schedule, ScheduleResult, Warning, StaffingShortfall,
 )
 
-# Valid fixed rest blocks: consecutive weekday pairs, excluding Fri-Sat [4,5] and Sat-Sun [5,6]
+# Valid fixed rest blocks: consecutive weekday pairs Mon-Fri only
 VALID_FIXED_BLOCKS: list[tuple[int, int]] = [(0, 1), (1, 2), (2, 3), (3, 4)]
+
+# Hard limit on consecutive working days
+MAX_CONSECUTIVE = 5
 
 
 def _minimum_for_date(d: date) -> int:
@@ -18,10 +21,7 @@ def _assign_rest_blocks(
     employees: list[Employee],
     previous_exceptions: list[ScheduleException],
 ) -> dict[str, list[int]]:
-    """
-    Return {employee_id: [weekday1, weekday2]} for all full-time employees.
-    Employees with an explicit block keep it; others get the least-used valid block.
-    """
+    """Return {employee_id: [weekday1, weekday2]} for all full-time employees."""
     result: dict[str, list[int]] = {}
     needs_assignment: list[Employee] = []
 
@@ -55,8 +55,8 @@ def _assign_free_weekends(
 ) -> dict[str, str]:
     """
     Return {employee_id: "fri_sat" | "sat_sun"}.
-    Rotates from the previous cycle's choice to ensure fairness.
-    Default when no previous: assign "fri_sat" (previous was "sat_sun").
+    Alternates from previous cycle. WEEKEND_MISSED continues the rotation
+    (generate_schedule will try both types for missed employees).
     """
     prev_type: dict[str, str] = {}
     for exc in previous_exceptions:
@@ -64,10 +64,11 @@ def _assign_free_weekends(
             prev_type[exc.employee_id] = "fri_sat"
         elif exc.type == ExceptionType.FREE_WEEKEND_SAT_SUN:
             prev_type[exc.employee_id] = "sat_sun"
+        # WEEKEND_MISSED: no entry → falls back to default rotation below
 
     result: dict[str, str] = {}
     for emp in employees:
-        last = prev_type.get(emp.id, "sat_sun")  # default: alternate to fri_sat
+        last = prev_type.get(emp.id, "sat_sun")  # default: give fri_sat first
         result[emp.id] = "sat_sun" if last == "fri_sat" else "fri_sat"
     return result
 
@@ -119,6 +120,19 @@ def _draft_for_placement(
     return day_map
 
 
+def _build_all_fixed_schedule(
+    leave_map: dict[date, ShiftStatus],
+    rest_block: list[int],
+    cycle_dates: list[date],
+) -> dict[date, ShiftStatus]:
+    """All 4 spans use the fixed rest block — no free weekend this cycle."""
+    rb = set(rest_block)
+    return {
+        d: leave_map.get(d) or (ShiftStatus.REST if d.weekday() in rb else ShiftStatus.WORK)
+        for d in cycle_dates
+    }
+
+
 def _build_ft_schedule(
     emp: Employee,
     cycle_dates: list[date],
@@ -126,14 +140,14 @@ def _build_ft_schedule(
     rest_block: list[int],
     weekend_type: str,
     preferred_span: int | None = None,
-) -> dict[date, ShiftStatus]:
+) -> tuple[dict[date, ShiftStatus], bool, int]:
     """
-    Build a full-time employee's 28-day schedule.
-    Tries all 4 span placements for the free weekend, picks the one with
-    minimum max consecutive working days (prefers ≤5, accepts 6).
-    preferred_span (0-3) is tried first; if it produces ≤6 consecutive days,
-    it is used directly (spreading free weekends across different cycle weeks).
-    Only falls back to the global minimum if the preferred span exceeds 6.
+    Returns (day_map, weekend_placed, span_idx).
+
+    Tries all 4 span placements for the free weekend, picking the one with the
+    fewest consecutive work days (hard limit: MAX_CONSECUTIVE = 5).
+    preferred_span is tried first; if it achieves ≤5, it is used directly.
+    Falls back to all-fixed-block (no free weekend) if no span achieves ≤5.
     """
     spans = [cycle_dates[i * 7:(i + 1) * 7] for i in range(4)]
     weekend_weekdays = (4, 5) if weekend_type == "fri_sat" else (5, 6)
@@ -146,14 +160,17 @@ def _build_ft_schedule(
         )
         stretches = _find_consecutive_stretches(candidate, cycle_dates)
         max_consec = max((length for _, length in stretches), default=0)
-        if max_consec <= 6:
-            return candidate
+        if max_consec <= MAX_CONSECUTIVE:
+            return candidate, True, preferred_span
 
-    # Fall back: find span with minimum max consecutive days
+    # Scan remaining spans for best ≤ MAX_CONSECUTIVE option
     best_map: dict[date, ShiftStatus] | None = None
     best_max_consecutive = 999
+    best_span_idx = -1
 
     for free_span_idx in range(4):
+        if free_span_idx == preferred_span:
+            continue  # already tried above
         candidate = _draft_for_placement(
             spans, free_span_idx, rb, weekend_weekdays, leave_map, cycle_dates
         )
@@ -162,15 +179,57 @@ def _build_ft_schedule(
         if max_consec < best_max_consecutive:
             best_max_consecutive = max_consec
             best_map = candidate
+            best_span_idx = free_span_idx
 
-    return best_map  # type: ignore[return-value]
+    if best_max_consecutive <= MAX_CONSECUTIVE:
+        return best_map, True, best_span_idx  # type: ignore[return-value]
+
+    # No span achieves ≤ MAX_CONSECUTIVE for this weekend type
+    fallback = _build_all_fixed_schedule(leave_map, rest_block, cycle_dates)
+    return fallback, False, -1
+
+
+def _try_second_weekend(
+    day_map: dict[date, ShiftStatus],
+    cycle_dates: list[date],
+    used_span_idx: int,
+    rest_block: list[int],
+    second_weekend_weekdays: tuple[int, int],
+    leave_map: dict[date, ShiftStatus],
+) -> tuple[dict[date, ShiftStatus], bool]:
+    """
+    Attempt to place a second free weekend in a span other than used_span_idx.
+    Replaces that span's fixed-block rest with weekend rest.
+    Returns (updated_day_map, success). Does NOT modify the original day_map.
+    """
+    spans = [cycle_dates[i * 7:(i + 1) * 7] for i in range(4)]
+    rb = tuple(rest_block)
+
+    for span_idx in range(4):
+        if span_idx == used_span_idx:
+            continue
+        # Build candidate: replace this span's fixed rest with weekend rest
+        candidate = dict(day_map)
+        for d in spans[span_idx]:
+            if d in leave_map:
+                candidate[d] = leave_map[d]
+            elif d.weekday() in second_weekend_weekdays:
+                candidate[d] = ShiftStatus.REST
+            else:
+                candidate[d] = ShiftStatus.WORK
+
+        stretches = _find_consecutive_stretches(candidate, cycle_dates)
+        max_consec = max((length for _, length in stretches), default=0)
+        if max_consec <= MAX_CONSECUTIVE:
+            return candidate, True
+
+    return day_map, False
 
 
 def _staffing_count(
     schedule_matrix: dict[str, dict[date, ShiftStatus]],
     d: date,
 ) -> int:
-    """Count WORK shifts for a given date across all employees."""
     return sum(
         1 for day_map in schedule_matrix.values()
         if day_map.get(d) == ShiftStatus.WORK
@@ -182,26 +241,18 @@ def _check_consecutive(
     cycle_dates: list[date],
 ) -> list[ScheduleException]:
     """
-    Scan all employees for consecutive working day violations.
-    Records 6-day stretches as exceptions.
-    Raises ValueError if any stretch exceeds 6 (caller must handle via fallback).
+    Raise ValueError if any employee exceeds MAX_CONSECUTIVE consecutive working days.
+    Returns an empty list (no exceptions recorded — ≤ MAX_CONSECUTIVE is the normal limit).
     """
-    exceptions: list[ScheduleException] = []
     for emp_id, day_map in schedule_matrix.items():
         stretches = _find_consecutive_stretches(day_map, cycle_dates)
         for stretch_start, length in stretches:
-            if length == 6:
-                exceptions.append(ScheduleException(
-                    employee_id=emp_id,
-                    type=ExceptionType.SIX_DAY_STRETCH,
-                    date=stretch_start,
-                ))
-            elif length > 6:
+            if length > MAX_CONSECUTIVE:
                 raise ValueError(
                     f"Employee {emp_id} has {length} consecutive working days "
-                    f"starting {stretch_start} — schedule is infeasible as drafted"
+                    f"starting {stretch_start} — exceeds maximum of {MAX_CONSECUTIVE}"
                 )
-    return exceptions
+    return []
 
 
 def _repair_staffing(
@@ -212,7 +263,7 @@ def _repair_staffing(
 ) -> list[StaffingShortfall]:
     """
     For each under-staffed day, try to convert a REST day to WORK for one employee
-    who: (a) is resting that day, (b) won't create a 7+ consecutive stretch.
+    who: (a) is resting that day, (b) won't create a stretch > MAX_CONSECUTIVE.
     Returns unfixable shortfalls.
     """
     shortfalls: list[StaffingShortfall] = []
@@ -227,19 +278,17 @@ def _repair_staffing(
             day_map = schedule_matrix[emp.id]
             if day_map.get(d) != ShiftStatus.REST:
                 continue
-            # Skip employees already at their 20-day FT limit
             if sum(1 for s in day_map.values() if s == ShiftStatus.WORK) >= 20:
                 continue
             if d in leave_sets.get(emp.id, set()):
                 continue
-            # Tentatively flip to WORK and check consecutive days
             day_map[d] = ShiftStatus.WORK
             stretches = _find_consecutive_stretches(day_map, cycle_dates)
-            if all(length <= 6 for _, length in stretches):
+            if all(length <= MAX_CONSECUTIVE for _, length in stretches):
                 repaired = True
                 break
             else:
-                day_map[d] = ShiftStatus.REST  # revert
+                day_map[d] = ShiftStatus.REST
 
         if not repaired:
             shortfalls.append(StaffingShortfall(
@@ -257,11 +306,9 @@ def _balance_staffing(
     leave_sets: dict[str, set[date]],
 ) -> None:
     """
-    Rebalance schedules to meet minimum staffing without changing total work counts.
-    For each under-staffed day, swap a resting employee's day with a WORK day on
-    an over-staffed day, keeping total work counts constant at 20 and
-    not creating 7+ consecutive working day stretches.
-    Modifies schedule_matrix in place.
+    Swap-based rebalancer: for each under-staffed day, move a WORK day from an
+    over-staffed day to the under-staffed day, keeping total work counts constant
+    and never creating a stretch > MAX_CONSECUTIVE.
     """
     for d in cycle_dates:
         required = _minimum_for_date(d)
@@ -278,7 +325,6 @@ def _balance_staffing(
             if d in leave_sets.get(emp.id, set()):
                 continue
 
-            # Find an over-staffed day where this employee works that can absorb the rest
             for other_d in sorted(cycle_dates, key=lambda x: -_staffing_count(schedule_matrix, x)):
                 if other_d == d:
                     continue
@@ -289,14 +335,13 @@ def _balance_staffing(
                 other_required = _minimum_for_date(other_d)
                 other_actual = _staffing_count(schedule_matrix, other_d)
                 if other_actual <= other_required:
-                    continue  # Cannot reduce staffing below minimum on the donor day
+                    continue
 
-                # Tentatively swap: rest on d, work on other_d
                 day_map[d] = ShiftStatus.WORK
                 day_map[other_d] = ShiftStatus.REST
                 stretches = _find_consecutive_stretches(day_map, cycle_dates)
-                if all(length <= 6 for _, length in stretches):
-                    break  # Swap accepted
+                if all(length <= MAX_CONSECUTIVE for _, length in stretches):
+                    break
                 else:
                     day_map[d] = ShiftStatus.REST
                     day_map[other_d] = ShiftStatus.WORK
@@ -309,11 +354,8 @@ def _build_pt_schedule(
     schedule_matrix: dict[str, dict[date, ShiftStatus]],
     target_days: int = 14,
 ) -> dict[date, ShiftStatus]:
-    """
-    Assign part-time schedule: target_days working days, prioritising under-staffed days.
-    """
+    """Assign part-time schedule: target_days working days, prioritising under-staffed days."""
     day_map: dict[date, ShiftStatus] = {}
-    # Sort dates by staffing count ascending (prefer under-staffed days)
     sorted_dates = sorted(
         cycle_dates,
         key=lambda d: (_staffing_count(schedule_matrix, d), d),
@@ -329,7 +371,6 @@ def _build_pt_schedule(
         else:
             day_map[d] = ShiftStatus.REST
 
-    # Fill any dates not yet assigned
     for d in cycle_dates:
         if d not in day_map:
             day_map[d] = ShiftStatus.REST
@@ -360,79 +401,111 @@ def generate_schedule(
                 leave_sets[leave.employee_id].add(d)
                 leave_statuses[leave.employee_id][d] = ShiftStatus(leave.type.value)
 
-    # Assign rest blocks and free weekends
+    # Employees who missed a weekend last cycle — give them priority and try a catch-up
+    missed_last_cycle: set[str] = {
+        exc.employee_id for exc in previous_exceptions
+        if exc.type == ExceptionType.WEEKEND_MISSED
+    }
+
+    # Assign rest blocks and initial weekend type preference
     rest_blocks = _assign_rest_blocks(active_ft, previous_exceptions)
     free_weekends = _assign_free_weekends(active_ft, previous_exceptions)
 
-    # Build full-time drafts, distributing free-weekend spans to maximise Friday/Saturday coverage.
-    # Employees whose rest block includes Friday (block [3,4]) or whose block forces span 0
-    # for fri_sat weekends (block [1,2]) are left to pick naturally; others prefer non-zero spans.
+    # Build full-time drafts
     schedule_matrix: dict[str, dict[date, ShiftStatus]] = {}
+    # {emp_id: (weekend_given, actual_type, span_idx)}
+    weekend_results: dict[str, tuple[bool, str | None, int]] = {}
+
     non_zero_counter = 0
     for i, emp in enumerate(active_ft):
         block = tuple(rest_blocks[emp.id])
         fw = free_weekends[emp.id]
-        # [1,2]+fri_sat must use span 0 (spans 1-3 create 8-day consecutive stretches).
-        # [3,4] block always rests Fri regardless, so span doesn't help Friday staffing.
-        # For all other fri_sat employees, avoid span 0 to keep Fridays covered.
+
         if fw == "fri_sat" and block not in ((1, 2), (3, 4)):
-            preferred = 1 + (non_zero_counter % 3)  # rotate through spans 1, 2, 3
+            preferred = 1 + (non_zero_counter % 3)
             non_zero_counter += 1
         else:
             preferred = i % 4
-        schedule_matrix[emp.id] = _build_ft_schedule(
-            emp,
-            cycle_dates,
-            leave_statuses[emp.id],
-            rest_blocks[emp.id],
-            free_weekends[emp.id],
-            preferred_span=preferred,
+
+        # Try primary weekend type
+        day_map, got_weekend, span_idx = _build_ft_schedule(
+            emp, cycle_dates, leave_statuses[emp.id],
+            rest_blocks[emp.id], fw, preferred_span=preferred,
         )
 
-    # Record free weekend type in exceptions for next cycle
+        # If primary failed, try alternate (important for WEEKEND_MISSED catch-up)
+        if not got_weekend:
+            alt_fw = "sat_sun" if fw == "fri_sat" else "fri_sat"
+            day_map2, got_alt, span_idx2 = _build_ft_schedule(
+                emp, cycle_dates, leave_statuses[emp.id],
+                rest_blocks[emp.id], alt_fw, preferred_span=None,
+            )
+            if got_alt:
+                day_map, got_weekend, span_idx, fw = day_map2, True, span_idx2, alt_fw
+
+        schedule_matrix[emp.id] = day_map
+        weekend_results[emp.id] = (got_weekend, fw if got_weekend else None, span_idx)
+
+    # Catch-up: employees who missed last cycle AND got a weekend this cycle
+    # → try to place a second weekend in a different span
+    for emp in active_ft:
+        if emp.id not in missed_last_cycle:
+            continue
+        got_weekend, actual_type, span_idx = weekend_results[emp.id]
+        if not got_weekend:
+            continue  # still couldn't get a weekend — don't attempt second
+
+        second_type = "sat_sun" if actual_type == "fri_sat" else "fri_sat"
+        second_weekdays: tuple[int, int] = (4, 5) if second_type == "fri_sat" else (5, 6)
+
+        new_map, got_2nd = _try_second_weekend(
+            schedule_matrix[emp.id], cycle_dates, span_idx,
+            rest_blocks[emp.id], second_weekdays, leave_statuses[emp.id],
+        )
+        if got_2nd:
+            schedule_matrix[emp.id] = new_map
+
+    # Build exceptions list for next cycle
     fw_exceptions: list[ScheduleException] = []
     for emp in active_ft:
-        wt = free_weekends[emp.id]
-        exc_type = (
-            ExceptionType.FREE_WEEKEND_FRI_SAT
-            if wt == "fri_sat"
-            else ExceptionType.FREE_WEEKEND_SAT_SUN
-        )
+        got_weekend, actual_type, _ = weekend_results[emp.id]
+        if got_weekend:
+            exc_type = (
+                ExceptionType.FREE_WEEKEND_FRI_SAT
+                if actual_type == "fri_sat"
+                else ExceptionType.FREE_WEEKEND_SAT_SUN
+            )
+        else:
+            exc_type = ExceptionType.WEEKEND_MISSED
         fw_exceptions.append(ScheduleException(
-            employee_id=emp.id,
-            type=exc_type,
-            date=start_date,
+            employee_id=emp.id, type=exc_type, date=start_date,
         ))
 
-    # Validate consecutive days — record 6-day exceptions
+    # Validate consecutive days
     try:
         consec_exceptions = _check_consecutive(schedule_matrix, cycle_dates)
     except ValueError:
-        # A 7+ stretch: activate fallback (simplified: treat as infeasible for now)
         consec_exceptions = []
 
-    # Rebalance staffing by swapping work days across employees (keeps work counts at 20)
+    # Rebalance staffing (swap-based, keeps work counts constant)
     _balance_staffing(schedule_matrix, active_ft, cycle_dates, leave_sets)
 
-    # Repair any remaining under-staffed days (adds work days as last resort)
-    shortfalls = _repair_staffing(schedule_matrix, active_ft, cycle_dates, leave_sets)
+    # Repair remaining shortfalls (adds work days as last resort)
+    _repair_staffing(schedule_matrix, active_ft, cycle_dates, leave_sets)
 
     # Build part-time schedules
     for emp in active_pt:
-        # Determine how many days needed based on remaining shortfalls
-        pt_target = min(16, max(12, 14))  # Always 14 for MVP
         schedule_matrix[emp.id] = _build_pt_schedule(
-            emp,
-            cycle_dates,
+            emp, cycle_dates,
             leave_statuses.get(emp.id, {}),
             schedule_matrix,
-            pt_target,
+            target_days=14,
         )
 
-    # Re-check staffing after part-time fills in
+    # Final staffing check
     final_shortfalls = _repair_staffing(schedule_matrix, active_ft, cycle_dates, leave_sets)
 
-    # Assemble Schedule object
+    # Assemble Schedule
     all_active = active_ft + active_pt
     days = []
     for d in cycle_dates:
