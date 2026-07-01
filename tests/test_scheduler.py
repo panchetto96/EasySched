@@ -5,7 +5,23 @@ from core.scheduler import (
     _minimum_for_date, VALID_FIXED_BLOCKS, _assign_rest_blocks,
     _assign_free_weekends, _build_ft_schedule, _find_consecutive_stretches,
     _staffing_count, _check_consecutive,
+    generate_schedule,
 )
+from core.models import Leave, LeaveType
+
+
+FULL_ROSTER = [
+    Employee(id=str(uuid.uuid4()), name=n, type=EmployeeType.FULL_TIME,
+             fixed_rest_block=None, active=True)
+    for n in ["Marco","Linda","Luca","Varinia","Emilia","Leia","Jo",
+              "Denise","Maurizio","Pia","Luisa","Ivo","Surbhi","Julian"]
+] + [
+    Employee(id=str(uuid.uuid4()), name=n, type=EmployeeType.PART_TIME,
+             fixed_rest_block=None, active=True)
+    for n in ["Gioia", "Guido"]
+]
+
+START = date(2025, 7, 7)  # Monday
 
 
 def make_ft(name="E", block=None) -> Employee:
@@ -248,3 +264,99 @@ def test_check_consecutive_detects_six_day_stretch():
     # There should be at least one SIX_DAY_STRETCH exception
     six_day = [e for e in exceptions if e.type == ExceptionType.SIX_DAY_STRETCH]
     assert len(six_day) >= 1
+
+
+# ── generate_schedule integration tests ───────────────────────────────────────
+
+def test_generate_schedule_is_feasible():
+    result = generate_schedule(FULL_ROSTER, [], START)
+    assert result.feasible
+    assert result.schedule is not None
+
+
+def test_generate_schedule_correct_work_days_ft():
+    result = generate_schedule(FULL_ROSTER, [], START)
+    assert result.feasible
+    ft_employees = [e for e in FULL_ROSTER if e.type == EmployeeType.FULL_TIME]
+    for emp in ft_employees:
+        work_count = sum(
+            1 for day in result.schedule.days
+            for shift in day.shifts
+            if shift.employee_id == emp.id and shift.status == ShiftStatus.WORK
+        )
+        assert work_count == 20, f"{emp.name} has {work_count} work days, expected 20"
+
+
+def test_generate_schedule_min_staffing_met():
+    result = generate_schedule(FULL_ROSTER, [], START)
+    assert result.feasible
+    for day in result.schedule.days:
+        required = _minimum_for_date(day.date)
+        actual = sum(1 for s in day.shifts if s.status == ShiftStatus.WORK)
+        assert actual >= required, (
+            f"{day.date} ({day.date.strftime('%A')}) has {actual} workers, needs {required}"
+        )
+
+
+def test_generate_schedule_no_excessive_consecutive():
+    result = generate_schedule(FULL_ROSTER, [], START)
+    assert result.feasible
+    for emp in FULL_ROSTER:
+        if emp.type != EmployeeType.FULL_TIME:
+            continue
+        day_map = {}
+        for day in result.schedule.days:
+            for shift in day.shifts:
+                if shift.employee_id == emp.id:
+                    day_map[day.date] = shift.status
+        cycle_dates = [START + timedelta(days=i) for i in range(28)]
+        stretches = _find_consecutive_stretches(day_map, cycle_dates)
+        for start_d, length in stretches:
+            assert length <= 6, f"{emp.name}: {length} consecutive days from {start_d}"
+
+
+def test_generate_schedule_part_time_range():
+    result = generate_schedule(FULL_ROSTER, [], START)
+    assert result.feasible
+    pt_employees = [e for e in FULL_ROSTER if e.type == EmployeeType.PART_TIME]
+    for emp in pt_employees:
+        work_count = sum(
+            1 for day in result.schedule.days
+            for shift in day.shifts
+            if shift.employee_id == emp.id and shift.status == ShiftStatus.WORK
+        )
+        assert 12 <= work_count <= 16, f"{emp.name} has {work_count} work days (12-16 required)"
+
+
+def test_generate_schedule_leave_respected():
+    emp = FULL_ROSTER[0]
+    leave_dates = [date(2025, 7, 7), date(2025, 7, 8), date(2025, 7, 9)]
+    leaves = [Leave(employee_id=emp.id, date=d, type=LeaveType.FERIE) for d in leave_dates]
+    result = generate_schedule(FULL_ROSTER, leaves, START)
+    for day in result.schedule.days:
+        if day.date in leave_dates:
+            for shift in day.shifts:
+                if shift.employee_id == emp.id:
+                    assert shift.status == ShiftStatus.FERIE
+
+
+def test_generate_schedule_exceptions_carry_forward():
+    result1 = generate_schedule(FULL_ROSTER, [], START)
+    # Use exceptions from first cycle to inform second cycle
+    next_start = START + timedelta(days=28)
+    result2 = generate_schedule(FULL_ROSTER, [], next_start, result1.schedule.exceptions)
+    assert result2.feasible
+
+
+def test_infeasible_when_too_many_on_leave():
+    # Put 10 of 14 FT employees on leave for an entire cycle — impossible to staff
+    ft = [e for e in FULL_ROSTER if e.type == EmployeeType.FULL_TIME]
+    on_leave = ft[:10]
+    leaves = [
+        Leave(employee_id=e.id, date=START + timedelta(days=i), type=LeaveType.FERIE)
+        for e in on_leave
+        for i in range(28)
+    ]
+    result = generate_schedule(FULL_ROSTER, leaves, START)
+    assert not result.feasible
+    assert len(result.errors) > 0
