@@ -5,6 +5,7 @@ __pycache__/
 dist/
 build/
 *.spec
+!hostel_scheduler.spec
 data/
 *.egg-info/
 .venv/
