@@ -56,7 +56,11 @@ class ScheduleCalendarView(QWidget):
         for col in range(COLS):
             lbl = QLabel(tr(f"weekday.short.{col}"))
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl.setStyleSheet("font-weight: bold; color: #444;")
+            is_weekend = col in (5, 6)
+            lbl.setStyleSheet(
+                f"font-weight: 700; font-size: 12px; padding: 6px 0; "
+                f"color: {'#dc2626' if is_weekend else '#1e293b'}; background: transparent;"
+            )
             self._grid.addWidget(lbl, 0, col)
 
         # Offset: first day of cycle to its weekday column
@@ -65,19 +69,6 @@ class ScheduleCalendarView(QWidget):
             col = (first_weekday + i) % COLS
             row = 1 + (first_weekday + i) // COLS
 
-            cell = QFrame()
-            cell.setStyleSheet("border: 1px solid #dde3ec; border-radius: 3px; background: white;")
-            cell.setMinimumSize(140, 80)
-            vbox = QVBoxLayout(cell)
-            vbox.setContentsMargins(4, 2, 4, 2)
-            vbox.setSpacing(1)
-
-            # Day number header
-            date_lbl = QLabel(str(d.day))
-            date_lbl.setStyleSheet("font-weight: bold; font-size: 12px; color: #333;")
-            vbox.addWidget(date_lbl)
-
-            # Count working employees
             workers = [
                 id_to_name[emp.id]
                 for emp in employees
@@ -85,18 +76,50 @@ class ScheduleCalendarView(QWidget):
                 and emp.id in id_to_name
             ]
             required = min_staffing[d]
-            if len(workers) < required:
-                cell.setStyleSheet(
-                    "border: 1px solid #f5c6cb; border-radius: 3px; background: #fff5f5;"
-                )
+            under = len(workers) < required
+            is_weekend_day = d.weekday() in (5, 6)
 
-            for name in workers[:6]:  # Show at most 6 names
+            cell = QFrame()
+            if under:
+                cell.setStyleSheet(
+                    "QFrame { border: 2px solid #dc2626; border-radius: 6px; "
+                    "background: #fef2f2; }"
+                )
+            elif is_weekend_day:
+                cell.setStyleSheet(
+                    "QFrame { border: 1px solid #e2e8f0; border-radius: 6px; "
+                    "background: #f8fafc; }"
+                )
+            else:
+                cell.setStyleSheet(
+                    "QFrame { border: 1px solid #e2e8f0; border-radius: 6px; "
+                    "background: #ffffff; }"
+                )
+            cell.setMinimumSize(140, 88)
+            vbox = QVBoxLayout(cell)
+            vbox.setContentsMargins(6, 4, 6, 4)
+            vbox.setSpacing(2)
+
+            # Day number + weekday count
+            header_row = QLabel(
+                f"<b style='font-size:13px; color:{'#dc2626' if under else '#0f172a'};'>"
+                f"{d.day}</b>"
+                f"<span style='font-size:10px; color:#64748b;'>"
+                f" &nbsp;{len(workers)}/{required}</span>"
+            )
+            header_row.setTextFormat(Qt.TextFormat.RichText)
+            vbox.addWidget(header_row)
+
+            for name in workers[:6]:
                 lbl = QLabel(name)
-                lbl.setStyleSheet("font-size: 10px; color: #1a6b3a;")
+                lbl.setStyleSheet(
+                    "font-size: 10px; color: #166534; background: transparent; padding: 0;"
+                )
                 vbox.addWidget(lbl)
             if len(workers) > 6:
                 more = QLabel(f"+ {len(workers) - 6} altri")
-                more.setStyleSheet("font-size: 9px; color: #888;")
+                more.setStyleSheet("font-size: 9px; color: #94a3b8; background: transparent;")
                 vbox.addWidget(more)
+            vbox.addStretch()
 
             self._grid.addWidget(cell, row, col)

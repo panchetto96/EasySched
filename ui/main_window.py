@@ -37,14 +37,19 @@ class MainWindow(QMainWindow):
 
     def _build_nav_bar(self):
         bar = QFrame()
-        bar.setStyleSheet("background-color: #1a3a6b;")
-        bar.setFixedHeight(48)
+        bar.setStyleSheet("background-color: #0f172a;")
+        bar.setFixedHeight(52)
         layout = QHBoxLayout(bar)
-        layout.setContentsMargins(12, 0, 12, 0)
+        layout.setContentsMargins(16, 0, 16, 0)
+        layout.setSpacing(4)
 
         def nav_btn(key, idx):
             btn = QPushButton(tr(key))
-            btn.setStyleSheet("color: white; background: transparent; font-size: 14px; padding: 4px 12px;")
+            btn.setStyleSheet(
+                "color: #cbd5e1; background: transparent; font-size: 14px; "
+                "font-weight: 600; padding: 6px 16px; border-radius: 6px;"
+                "border: none;"
+            )
             btn.clicked.connect(lambda _, i=idx: self._stack.setCurrentIndex(i))
             return btn
 
@@ -54,19 +59,29 @@ class MainWindow(QMainWindow):
         layout.addStretch()
 
         self._lang_btn = QPushButton("IT | EN")
-        self._lang_btn.setStyleSheet("color: #aac4f5; background: transparent; font-size: 13px;")
+        self._lang_btn.setStyleSheet(
+            "color: #64748b; background: transparent; font-size: 12px; "
+            "padding: 4px 10px; border: 1px solid #334155; border-radius: 4px;"
+        )
         self._lang_btn.clicked.connect(self._toggle_language)
         layout.addWidget(self._lang_btn)
         return bar
 
     def _build_toolbar(self):
         bar = QFrame()
-        bar.setStyleSheet("background-color: #eef1f7; border-bottom: 1px solid #dde3ec;")
-        bar.setFixedHeight(44)
+        bar.setStyleSheet(
+            "background-color: #ffffff; border-bottom: 2px solid #e2e8f0;"
+        )
+        bar.setFixedHeight(48)
         layout = QHBoxLayout(bar)
-        layout.setContentsMargins(12, 0, 12, 0)
+        layout.setContentsMargins(16, 0, 16, 0)
+        layout.setSpacing(8)
 
         self._cycle_label = QLabel()
+        self._cycle_label.setStyleSheet(
+            "color: #1e293b; font-size: 14px; font-weight: 700; "
+            "background: transparent; padding-right: 12px;"
+        )
         layout.addWidget(self._cycle_label)
 
         def tb_btn(key, cb, secondary=False):

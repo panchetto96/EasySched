@@ -11,12 +11,20 @@ from ui.app import get_data_dir
 from ui.i18n import tr
 
 _STATUS_COLOR = {
-    ShiftStatus.WORK:     QColor("#d4edda"),   # green
-    ShiftStatus.REST:     QColor("#e9ecef"),   # grey
-    ShiftStatus.FERIE:    QColor("#cce5ff"),   # blue
-    ShiftStatus.MALATTIA: QColor("#ffe5b0"),   # orange
-    ShiftStatus.PERMESSO: QColor("#fff3cd"),   # yellow
-    ShiftStatus.OVERRIDE: QColor("#f0e0ff"),   # purple tint
+    ShiftStatus.WORK:     QColor("#16a34a"),   # vivid green
+    ShiftStatus.REST:     QColor("#94a3b8"),   # slate gray
+    ShiftStatus.FERIE:    QColor("#2563eb"),   # vivid blue
+    ShiftStatus.MALATTIA: QColor("#ea580c"),   # vivid orange
+    ShiftStatus.PERMESSO: QColor("#d97706"),   # vivid amber
+    ShiftStatus.OVERRIDE: QColor("#7c3aed"),   # vivid purple
+}
+_STATUS_TEXT = {
+    ShiftStatus.WORK:     QColor("#ffffff"),
+    ShiftStatus.REST:     QColor("#ffffff"),
+    ShiftStatus.FERIE:    QColor("#ffffff"),
+    ShiftStatus.MALATTIA: QColor("#ffffff"),
+    ShiftStatus.PERMESSO: QColor("#ffffff"),
+    ShiftStatus.OVERRIDE: QColor("#ffffff"),
 }
 _STATUS_LABEL = {
     ShiftStatus.WORK:     "L",
@@ -109,10 +117,17 @@ class ScheduleGridView(QWidget):
             count = daily_counts[d]
             required = min_staffing[d]
             item = QTableWidgetItem(str(count))
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            font = QFont()
+            font.setBold(True)
+            item.setFont(font)
             if count < required:
-                item.setBackground(QBrush(QColor("#f8d7da")))
-                item.setForeground(QBrush(QColor("#721c24")))
+                item.setBackground(QBrush(QColor("#dc2626")))
+                item.setForeground(QBrush(QColor("#ffffff")))
+            else:
+                item.setBackground(QBrush(QColor("#f0fdf4")))
+                item.setForeground(QBrush(QColor("#166534")))
             self._table.setItem(len(employees), col_idx, item)
 
         # Resize
@@ -128,6 +143,10 @@ class ScheduleGridView(QWidget):
         item = QTableWidgetItem(_STATUS_LABEL[status])
         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         item.setBackground(QBrush(_STATUS_COLOR[status]))
+        item.setForeground(QBrush(_STATUS_TEXT[status]))
+        font = QFont()
+        font.setBold(True)
+        item.setFont(font)
         item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
         return item
 
