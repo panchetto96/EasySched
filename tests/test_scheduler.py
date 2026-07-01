@@ -102,7 +102,7 @@ def test_no_sat_sun_block_ever_assigned():
 def test_free_weekend_default_is_fri_sat():
     emp = make_ft()
     result = _assign_free_weekends([emp], [])
-    assert result[emp.id] in ("fri_sat", "sat_sun")
+    assert result[emp.id] == "fri_sat"
 
 
 def test_free_weekend_rotates_from_previous():
@@ -156,6 +156,19 @@ def test_ft_schedule_leave_days_excluded_from_work():
     leave_date = date(2025, 7, 10)  # Thursday (normally a work day for Mon-Tue block)
     leave_map = {leave_date: ShiftStatus.FERIE}
     day_map = _build_ft_schedule(emp, cycle_dates, leave_map, [0, 1], "fri_sat")
+    assert day_map[leave_date] == ShiftStatus.FERIE
+
+
+def test_ft_schedule_leave_days_reduce_work_rest_total():
+    emp = make_ft(block=[0, 1])
+    cycle_dates = [date(2025, 7, 7) + timedelta(days=i) for i in range(28)]
+    leave_date = date(2025, 7, 10)
+    leave_map = {leave_date: ShiftStatus.FERIE}
+    day_map = _build_ft_schedule(emp, cycle_dates, leave_map, [0, 1], "fri_sat")
+    work_days = sum(1 for s in day_map.values() if s == ShiftStatus.WORK)
+    rest_days = sum(1 for s in day_map.values() if s == ShiftStatus.REST)
+    # Leave day is not WORK or REST, so total is 27
+    assert work_days + rest_days == 27
     assert day_map[leave_date] == ShiftStatus.FERIE
 
 

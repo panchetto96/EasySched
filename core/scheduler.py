@@ -147,7 +147,5 @@ def _build_ft_schedule(
         if max_consec < best_max_consecutive:
             best_max_consecutive = max_consec
             best_map = candidate
-        if max_consec <= 5:
-            break  # Good enough — stop searching
 
     return best_map  # type: ignore[return-value]
