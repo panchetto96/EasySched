@@ -227,6 +227,9 @@ def _repair_staffing(
             day_map = schedule_matrix[emp.id]
             if day_map.get(d) != ShiftStatus.REST:
                 continue
+            # Skip employees already at their 20-day FT limit
+            if sum(1 for s in day_map.values() if s == ShiftStatus.WORK) >= 20:
+                continue
             if d in leave_sets.get(emp.id, set()):
                 continue
             # Tentatively flip to WORK and check consecutive days

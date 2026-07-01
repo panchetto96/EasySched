@@ -8,6 +8,8 @@ from ui.i18n import tr, set_language, get_language
 from ui.app import get_data_dir
 from core import storage
 
+_active_window: "MainWindow | None" = None
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -223,10 +225,11 @@ class MainWindow(QMainWindow):
         self._retranslate()
 
     def _retranslate(self):
+        global _active_window
         # Re-build the entire UI — simplest correct approach for a small app
         self.close()
-        new_win = MainWindow()
-        new_win.show()
+        _active_window = MainWindow()
+        _active_window.show()
 
     def _reload_employees(self):
         self._employees = storage.load_employees(get_data_dir())
