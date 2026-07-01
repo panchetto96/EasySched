@@ -72,33 +72,54 @@ class MainWindow(QMainWindow):
         bar.setStyleSheet(
             "background-color: #ffffff; border-bottom: 2px solid #E2D9CF;"
         )
-        bar.setFixedHeight(48)
+        bar.setFixedHeight(52)
         layout = QHBoxLayout(bar)
         layout.setContentsMargins(16, 0, 16, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(6)
 
         self._cycle_label = QLabel()
         self._cycle_label.setStyleSheet(
             "color: #292217; font-size: 14px; font-weight: 700; "
-            "background: transparent; padding-right: 12px;"
+            "background: transparent; padding-right: 8px;"
         )
         layout.addWidget(self._cycle_label)
 
-        def tb_btn(key, cb, secondary=False):
+        def sec_btn(key, cb):
             btn = QPushButton(tr(key))
-            if secondary:
-                btn.setObjectName("secondary")
+            btn.setObjectName("secondary")
             btn.clicked.connect(cb)
             layout.addWidget(btn)
             return btn
 
-        tb_btn("schedule.prev", self._prev_cycle, secondary=True)
-        tb_btn("schedule.next", self._next_cycle, secondary=True)
-        layout.addSpacing(16)
-        tb_btn("schedule.generate", self._generate_schedule)
-        tb_btn("schedule.export_csv", self._export_csv, secondary=True)
-        tb_btn("schedule.import_csv", self._import_csv, secondary=True)
+        sec_btn("schedule.prev", self._prev_cycle)
+        sec_btn("schedule.next", self._next_cycle)
+
+        sep = QWidget()
+        sep.setFixedSize(1, 24)
+        sep.setStyleSheet("background-color: #D6CBC0;")
+        layout.addSpacing(6)
+        layout.addWidget(sep)
+        layout.addSpacing(6)
+
+        sec_btn("schedule.export_csv", self._export_csv)
+        sec_btn("schedule.import_csv", self._import_csv)
+
         layout.addStretch()
+
+        gen_btn = QPushButton(tr("schedule.generate"))
+        gen_btn.setObjectName("generate_action")
+        gen_btn.setStyleSheet(
+            "QPushButton#generate_action {"
+            "  background-color: #C2410C; color: #ffffff; border: none;"
+            "  padding: 9px 28px; border-radius: 7px; font-weight: 700;"
+            "  font-size: 14px; letter-spacing: 0.3px; min-width: 130px;"
+            "}"
+            "QPushButton#generate_action:hover { background-color: #9A3412; }"
+            "QPushButton#generate_action:pressed { background-color: #7C2D12; }"
+        )
+        gen_btn.clicked.connect(self._generate_schedule)
+        layout.addWidget(gen_btn)
+
         self._update_cycle_label()
         return bar
 
