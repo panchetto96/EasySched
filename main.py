@@ -32,12 +32,11 @@ def _seed_if_empty(data_dir: Path) -> None:
     employees = [
         Employee(id=str(uuid.uuid4()), name=n, type=EmployeeType.FULL_TIME,
                  fixed_rest_block=None, active=True)
-        for n in ["Marco","Linda","Luca","Varinia","Emilia","Leia","Jo",
-                  "Denise","Maurizio","Pia","Luisa","Ivo","Surbhi","Julian"]
+        for n in [f"Dipendente {i}" for i in range(1, 15)]
     ] + [
         Employee(id=str(uuid.uuid4()), name=n, type=EmployeeType.PART_TIME,
                  fixed_rest_block=None, active=True)
-        for n in ["Gioia","Guido"]
+        for n in ["Part-time 1", "Part-time 2"]
     ]
     save_employees(data_dir, employees)
 
